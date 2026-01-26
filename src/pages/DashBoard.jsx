@@ -1,7 +1,7 @@
+// src/pages/DashBoard.jsx
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../services/firebaseConfig';
-import { auth } from '../services/firebaseConfig';
+import { db, auth } from '../services/firebaseConfig'; // Certifique-se que o import do auth está correto
 import { addMonths } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import MonthCard from '../components/MonthCard';
@@ -9,25 +9,23 @@ import AddTransactionModal from '../components/AddTransactionModal';
 
 const DashBoard = () => {
   const [salary, setSalary] = useState(0);
-  const [monthsToShow, setMonthsToShow] = useState(12); // Padrão inicial
+  const [monthsToShow, setMonthsToShow] = useState(12);
   const [transactions, setTransactions] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   
-  // Estado para controlar qual item está sendo editado (null = criando novo)
-  const [editingTransaction, setEditingTransaction] = useState(null);
-
+  // Estado para controlar o Modal (Data e Transação)
+  const [modalData, setModalData] = useState({ isOpen: false, date: null, transaction: null });
+  
   const navigate = useNavigate();
   const user = auth.currentUser;
 
   const fetchData = async () => {
     if (!user) return;
 
-    // Busca usuário para pegar SALÁRIO e MESES CONFIGURADOS
+    // Buscar Configurações do Usuário
     const userDoc = await getDoc(doc(db, "users", user.uid));
     if (userDoc.exists()) {
       const data = userDoc.data();
       setSalary(data.salary || 0);
-      // Se tiver salvo no banco, usa. Se não, usa 12.
       if (data.monthsToShow) setMonthsToShow(data.monthsToShow);
     }
 
@@ -54,25 +52,17 @@ const DashBoard = () => {
     }
   };
   
-  // Abre o modal em modo de EDIÇÃO
-  const handleEdit = (transaction) => {
-    setEditingTransaction(transaction); // Preenche os dados
-    setIsModalOpen(true); // Abre o modal
-  };
-
-  // Abre o modal em modo de CRIAÇÃO (limpo)
-  const handleNew = () => {
-    setEditingTransaction(null); // Garante que está limpo
-    setIsModalOpen(true);
-  }
-  
+  // FUNÇÕES QUE TINHAM SUMIDO (RESTAURADAS AQUI)
   const handleUpdateSalary = async () => {
       const val = prompt("Qual o valor do salário mensal?", salary);
       if(val) {
           const num = parseFloat(val);
-          setSalary(num);
-          // Atualiza salário sem mexer no resto
-          await setDoc(doc(db, "users", user.uid), { salary: num }, { merge: true });
+          if(!isNaN(num)) {
+            setSalary(num);
+            if (user) {
+                await setDoc(doc(db, "users", user.uid), { salary: num }, { merge: true });
+            }
+          }
       }
   }
 
@@ -80,17 +70,34 @@ const DashBoard = () => {
       const val = prompt("Quantos meses à frente deseja visualizar?", monthsToShow);
       if(val) {
           const num = parseInt(val);
-          if (num > 0 && num <= 60) { // Limite de segurança
+          if (num > 0 && num <= 60) { 
             setMonthsToShow(num);
-            // Salva preferência no banco
-            await setDoc(doc(db, "users", user.uid), { monthsToShow: num }, { merge: true });
+            if (user) {
+                await setDoc(doc(db, "users", user.uid), { monthsToShow: num }, { merge: true });
+            }
           } else {
             alert("Por favor, insira um número entre 1 e 60.");
           }
       }
   }
 
-  // Gera a lista de meses baseada na configuração
+  // --- CONTROLE DO MODAL ---
+
+  // Abre para EDIÇÃO
+  const handleEdit = (transaction, dateContext) => {
+    setModalData({ isOpen: true, date: dateContext, transaction: transaction });
+  };
+
+  // Abre para NOVA conta
+  const handleNew = (dateContext) => {
+    setModalData({ isOpen: true, date: dateContext, transaction: null });
+  }
+
+  const handleCloseModal = () => {
+    setModalData({ isOpen: false, date: null, transaction: null });
+  }
+
+  // Gera a lista de meses
   const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(new Date(), i));
 
   return (
@@ -99,17 +106,23 @@ const DashBoard = () => {
         <h1 className="font-bold text-lg">Minhas Finanças</h1>
         
         <div className="flex gap-2 flex-wrap justify-end">
-            <button onClick={handleUpdateMonths} className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-1 rounded transition-colors" title="Alterar visualização">
+            <button 
+                onClick={handleUpdateMonths} 
+                className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-1 rounded transition-colors flex items-center gap-1"
+            >
                 📅 {monthsToShow} Meses
             </button>
-            <button onClick={handleUpdateSalary} className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-1 rounded transition-colors">
-                💰 Salário: {salary}
+            <button 
+                onClick={handleUpdateSalary} 
+                className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-1 rounded transition-colors flex items-center gap-1"
+            >
+                💰 Salário: {parseFloat(salary).toFixed(2)}
             </button>
-            <button onClick={() => navigate('/history')} className="text-xs bg-white text-blue-600 px-3 py-1 rounded font-bold hover:bg-blue-50">
+            <button 
+                onClick={() => navigate('/history')} 
+                className="text-xs bg-white text-blue-600 px-3 py-1 rounded font-bold hover:bg-blue-50"
+            >
                 Histórico
-            </button>
-            <button onClick={handleNew} className="text-xs bg-blue-900 text-white px-3 py-1 rounded font-bold hover:bg-blue-950">
-                + Novo
             </button>
         </div>
       </header>
@@ -122,16 +135,18 @@ const DashBoard = () => {
                 salary={salary} 
                 allTransactions={transactions} 
                 onDelete={handleDelete}
-                onEdit={handleEdit} 
+                onEdit={handleEdit}
+                onAdd={handleNew} 
             />
           </div>
         ))}
       </div>
 
-      {isModalOpen && (
+      {modalData.isOpen && (
         <AddTransactionModal 
-            initialData={editingTransaction} // Passa dados se for edição
-            onClose={() => setIsModalOpen(false)} 
+            initialData={modalData.transaction} 
+            selectedDate={modalData.date}
+            onClose={handleCloseModal} 
             onSuccess={fetchData} 
         />
       )}

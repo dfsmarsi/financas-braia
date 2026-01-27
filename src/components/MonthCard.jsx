@@ -95,13 +95,13 @@ const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onC
                 <button 
                     onClick={onCloseMonth} 
                     title="Fechar este mês financeiramente"
-                    className="bg-red-500 text-white w-9 h-9 rounded-lg flex items-center justify-center hover:bg-red-600 transition-all shadow-sm border border-red-400"
+                    className="bg-red-500 text-white mr-2 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-red-600 transition-all shadow-sm border border-red-400"
                 >
                     <Lock size={18} strokeWidth={2.5} />
                 </button>
             )}
 
-            <button onClick={() => onAdd(date)} className="bg-white text-blue-600 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-blue-50 transition-colors shadow-sm">
+            <button onClick={() => onAdd(date)} className="bg-white text-blue-600 w-9 h-9 mr-1 rounded-lg flex items-center justify-center hover:bg-blue-50 transition-colors shadow-sm">
                 <Plus size={22} strokeWidth={3} />
             </button>
         </div>

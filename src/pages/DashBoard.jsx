@@ -172,9 +172,18 @@ const DashBoard = () => {
   const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(startMonth, i));
 
   return (
-    // AJUSTE 1: max-w-full para evitar scroll horizontal na página
-    <div className="h-[100dvh] w-full max-w-full bg-blue-50 flex flex-col overflow-hidden">
+    // AJUSTE CRÍTICO: 'fixed inset-0' trava a tela e impede rolagem do body
+    <div className="fixed inset-0 bg-blue-50 flex flex-col overflow-hidden">
       <style>{`
+        /* Bloqueia o Pull-to-Refresh e rolagem do Body */
+        html, body {
+          overscroll-behavior-y: none;
+          overflow: hidden;
+          height: 100%;
+          width: 100%;
+          position: fixed;
+        }
+        
         .custom-scrollbar::-webkit-scrollbar {
           height: 12px;
         }
@@ -192,7 +201,7 @@ const DashBoard = () => {
         }
       `}</style>
 
-      {/* HEADER (shrink-0 garante que ele não diminui, mas ele empurra o resto pra baixo) */}
+      {/* HEADER */}
       <header className="shrink-0 bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md z-10 w-full">
         
         <div 
@@ -235,19 +244,15 @@ const DashBoard = () => {
         </div>
       </header>
 
-      {/* AJUSTE 2 E 3: flex-1 + min-h-0. 
-         - min-h-0 permite que este container encolha quando o header crescer.
-         - Removi o h-full daqui para deixar o flex controlar.
-      */}
+      {/* ÁREA DE SCROLL */}
       <div 
         ref={scrollRef}
-        className="flex-1 min-h-0 w-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-3 items-start custom-scrollbar"
+        className="flex-1 min-h-0 w-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-6 items-start custom-scrollbar"
       >
         {months.map((date, i) => (
           <div 
             key={i} 
             id={'month-card-' + i} 
-            // O card interno tem h-full para ocupar todo o espaço vertical disponível que o flex-1 cedeu
             className="snap-center shrink-0 w-[90vw] md:w-[400px] h-full"
           >
             <MonthCard 

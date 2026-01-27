@@ -1,32 +1,44 @@
 import React, { useState, useEffect } from 'react';
-import { addDoc, collection, doc, updateDoc } from 'firebase/firestore'; 
+import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch } from 'firebase/firestore'; 
 import { db } from '../services/firebaseConfig';
 import { useAuth } from '../services/auth';
-import { addMonths, format } from 'date-fns';
+import { addMonths, format, subMonths } from 'date-fns';
 
 const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) => {
   const { user } = useAuth();
   
-  // Estados do Formulário
-  const [category, setCategory] = useState('single'); // single, installment, fixed
+  const [category, setCategory] = useState('single'); 
   const [desc, setDesc] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('expense');
   const [installments, setInstallments] = useState(2);
-  const [fixedType, setFixedType] = useState('static'); // static (valor fixo), variable (zero inicial)
+  const [fixedType, setFixedType] = useState('static');
   const [loading, setLoading] = useState(false);
   
-  // Carregar dados na Edição
+  const cleanDescription = (fullDesc) => {
+    if (!fullDesc) return '';
+    // Limpa qualquer sufixo de liquidada antigo ou novo para permitir edição limpa do nome
+    let cleaned = fullDesc.split(' Liquidada(as):')[0];
+    cleaned = cleaned.split(' / Liquidada')[0];
+    cleaned = cleaned.replace(/\s\(Liquidado\)$/, '');
+    // Remove numeração (X/Y)
+    cleaned = cleaned.replace(/\s\(\d+\/\d+\)$/, '');
+    return cleaned;
+  };
+
   useEffect(() => {
     if (initialData) {
-      setDesc(initialData.description);
+      if (initialData.installmentTotal) {
+          setDesc(cleanDescription(initialData.description));
+      } else {
+          setDesc(initialData.description);
+      }
+
       setType(initialData.type);
       
-      // Verifica o tipo para preencher a UI corretamente
       if (initialData.isFixedVariable) {
         setCategory('fixed');
         setFixedType('variable');
-        // Se for variável, tenta pegar o valor override daquele mês, ou o base
         const monthKey = format(selectedDate, 'yyyy-MM');
         const val = initialData.overrides && initialData.overrides[monthKey] !== undefined 
             ? initialData.overrides[monthKey] 
@@ -36,12 +48,86 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
         setCategory('fixed');
         setFixedType('static');
         setAmount(initialData.amount);
+      } else if (initialData.installmentTotal) {
+        setCategory('installment');
+        setAmount(initialData.amount);
+        setInstallments(initialData.installmentTotal);
       } else {
-        setCategory('single'); // Parcelas viram 'single' ao editar individualmente
+        setCategory('single');
         setAmount(initialData.amount);
       }
     }
   }, [initialData, selectedDate]);
+
+  const handleStopRecurring = async () => {
+    if(!confirm("Deseja encerrar esta conta fixa? Ela deixará de aparecer nos próximos meses, mas o histórico será mantido.")) return;
+    setLoading(true);
+    try {
+        const ref = doc(db, "transactions", initialData.id);
+        await updateDoc(ref, {
+            endDate: selectedDate 
+        });
+        onSuccess();
+        onClose();
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao encerrar conta.");
+    }
+    setLoading(false);
+  }
+
+  // --- LIQUIDAÇÃO LIMPA (Sem texto duplicado) ---
+  const handleLiquidate = async () => {
+    if(!confirm("Deseja liquidar todas as parcelas futuras? O valor restante será somado nesta conta.")) return;
+    setLoading(true);
+    try {
+        const batch = writeBatch(db);
+        if (initialData.groupId) {
+            const q = query(
+                collection(db, "transactions"), 
+                where("groupId", "==", initialData.groupId),
+                where("uid", "==", user.uid) 
+            );
+            const snapshot = await getDocs(q);
+            
+            let futureAmount = 0;
+            let liquidatedCount = 1; // Contando a atual + futuras
+
+            snapshot.docs.forEach(docSnap => {
+                const data = docSnap.data();
+                if (data.installmentCurrent > initialData.installmentCurrent) {
+                    futureAmount += Number(data.amount);
+                    liquidatedCount++; 
+                    batch.delete(docSnap.ref); 
+                }
+            });
+            
+            const currentRef = doc(db, "transactions", initialData.id);
+            
+            // AQUI MUDOU: Apenas Nome + (X/Y). Nada de texto "Liquidada".
+            // A informação vai apenas nas flags isLiquidated/liquidatedCount
+            const installmentInfo = ` (${initialData.installmentCurrent}/${initialData.installmentTotal})`;
+            const cleanFullDescription = `${desc}${installmentInfo}`;
+
+            batch.update(currentRef, {
+                amount: Number(initialData.amount) + futureAmount,
+                description: cleanFullDescription, 
+                isLiquidated: true,
+                liquidatedCount: liquidatedCount
+            });
+            
+            await batch.commit();
+            onSuccess();
+            onClose();
+        } else {
+            alert("Erro: Sem vínculo de grupo.");
+        }
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao liquidar.");
+    }
+    setLoading(false);
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -53,65 +139,107 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
         uid: user.uid,
         description: desc,
         type,
-        // Se for novo, usa a data selecionada. Se for edição, mantém a original.
         date: initialData ? initialData.date : (selectedDate || new Date()), 
       };
 
-      // --- MODO EDIÇÃO ---
       if (initialData) {
         const ref = doc(db, "transactions", initialData.id);
         
-        if (initialData.isFixedVariable) {
-            // Lógica Especial: Fixa Variável
-            // Não alteramos o valor global, mas sim o override deste mês
+        // CENÁRIO 1: Conta Fixa Variável
+        if (initialData.isFixedVariable && category === 'fixed' && fixedType === 'variable') {
             const monthKey = format(selectedDate, 'yyyy-MM');
             const currentOverrides = initialData.overrides || {};
-            
             await updateDoc(ref, {
-                description: desc, // Descrição atualiza globalmente
-                overrides: {
-                    ...currentOverrides,
-                    [monthKey]: parseFloat(amount)
+                description: desc, 
+                overrides: { ...currentOverrides, [monthKey]: parseFloat(amount) }
+            });
+        } 
+        // CENÁRIO 2: Parcela 1 (Recriação)
+        else if (initialData.installmentCurrent === 1 && category === 'installment' && initialData.groupId) {
+             if(confirm("Ao editar a parcela 1, toda a série será recriada. Continuar?")) {
+                const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
+                const snap = await getDocs(q);
+                const batch = writeBatch(db);
+                snap.docs.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+
+                const newGroupId = Date.now().toString();
+                const batchNew = [];
+                const val = parseFloat(amount);
+                const dateStart = initialData.date && initialData.date.toDate ? initialData.date.toDate() : (initialData.date || new Date());
+                const qtdParcelas = parseInt(installments);
+
+                for (let i = 0; i < qtdParcelas; i++) {
+                    const docDate = addMonths(dateStart, i);
+                    batchNew.push(addDoc(collection(db, "transactions"), {
+                        ...baseData, 
+                        description: `${desc} (${i+1}/${qtdParcelas})`, 
+                        amount: val, isFixed: false,
+                        installmentTotal: qtdParcelas, installmentCurrent: i+1, groupId: newGroupId, date: docDate
+                    }));
                 }
-            });
-        } else {
-            // Edição Normal (Avulsa ou Fixa Estática)
-            await updateDoc(ref, {
-                ...baseData,
-                amount: parseFloat(amount),
-                isFixed: category === 'fixed',
-                // Se mudou de categoria, removemos flags antigas
-                isFixedVariable: false 
-            });
+                await Promise.all(batchNew);
+             }
+        }
+        // CENÁRIO 3: Edição Normal
+        else {
+            if (category === 'installment' && initialData.groupId) {
+                const batch = writeBatch(db);
+                const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
+                const snap = await getDocs(q);
+
+                snap.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    
+                    // AQUI MUDOU: Sempre salva limpo: Nome (X/Y)
+                    // Se a conta for liquidada, ela já tem a flag no banco, então a Tag laranja vai aparecer.
+                    // Não precisamos escrever no texto.
+                    const newNameWithNumber = `${desc} (${data.installmentCurrent}/${data.installmentTotal})`;
+                    
+                    if (docSnap.id === initialData.id) {
+                        batch.update(docSnap.ref, {
+                            description: newNameWithNumber,
+                            amount: parseFloat(amount),
+                            type
+                        });
+                    } else {
+                        batch.update(docSnap.ref, {
+                            description: newNameWithNumber
+                        });
+                    }
+                });
+                await batch.commit();
+            } else {
+                await updateDoc(ref, {
+                    ...baseData,
+                    amount: parseFloat(amount),
+                    isFixed: category === 'fixed',
+                    isFixedVariable: category === 'fixed' && fixedType === 'variable',
+                    installmentTotal: category === 'installment' ? parseInt(installments) : null,
+                    installmentCurrent: category === 'installment' ? 1 : null,
+                    overrides: (category === 'fixed' && fixedType === 'variable') ? (initialData.overrides || {}) : {}
+                });
+            }
         }
 
       } else {
-        // --- MODO CRIAÇÃO (NOVO) ---
-        
+        // CREATE
         if (category === 'single') {
-            await addDoc(collection(db, "transactions"), {
-                ...baseData,
-                amount: parseFloat(amount),
-                isFixed: false
-            });
+            await addDoc(collection(db, "transactions"), { ...baseData, amount: parseFloat(amount), isFixed: false });
         } 
         else if (category === 'installment') {
-            // Loop para criar X documentos
             const batchPromises = [];
             const val = parseFloat(amount);
             const dateStart = selectedDate || new Date();
-
-            for (let i = 0; i < installments; i++) {
+            const newGroupId = Date.now().toString(); 
+            const qtdParcelas = parseInt(installments);
+            for (let i = 0; i < qtdParcelas; i++) {
                 const docDate = addMonths(dateStart, i);
                 batchPromises.push(addDoc(collection(db, "transactions"), {
-                    uid: user.uid,
-                    description: `${desc} (${i+1}/${installments})`,
-                    amount: val, // Valor da parcela (assumindo que o usuário digitou o valor DA PARCELA)
-                    type,
-                    isFixed: false,
-                    installmentTotal: installments,
-                    installmentCurrent: i+1,
-                    date: docDate
+                    uid: user.uid, 
+                    description: `${desc} (${i+1}/${qtdParcelas})`, 
+                    amount: val, type, isFixed: false,
+                    installmentTotal: qtdParcelas, installmentCurrent: i+1, groupId: newGroupId, date: docDate
                 }));
             }
             await Promise.all(batchPromises);
@@ -119,131 +247,105 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
         else if (category === 'fixed') {
             const isVar = fixedType === 'variable';
             await addDoc(collection(db, "transactions"), {
-                ...baseData,
-                amount: isVar ? 0 : parseFloat(amount), // Se variavel, base é 0
-                isFixed: true,
-                isFixedVariable: isVar,
-                overrides: {} // Mapa vazio para os valores futuros
+                ...baseData, amount: isVar ? 0 : parseFloat(amount), isFixed: true, isFixedVariable: isVar, overrides: {} 
             });
         }
       }
-
       onSuccess();
       onClose();
     } catch (error) {
       console.error(error);
-      alert("Erro ao salvar.");
+      alert("Erro ao salvar: " + error.message);
     }
     setLoading(false);
   };
+
+  const isInstallmentChild = initialData && initialData.installmentCurrent > 1;
+  const isLiquidated = initialData && (initialData.isLiquidated || (initialData.description && initialData.description.includes('Liquidada')));
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
         <h2 className="text-xl font-bold text-blue-900 mb-6">
-          {initialData ? 'Editar Registro' : 'Novo Registro'}
+          {initialData ? 'Editar lançamento' : 'Novo lançamento'}
         </h2>
         
         <form onSubmit={handleSave} className="space-y-5">
-          
-          {/* SELEÇÃO DE TIPO (Só aparece ao criar novo) */}
-          {!initialData && (
+          {!isInstallmentChild && (
               <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-lg">
-                <button type="button" onClick={() => setCategory('single')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>Avulsa</button>
-                <button type="button" onClick={() => setCategory('installment')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'installment' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>Parcelada</button>
-                <button type="button" onClick={() => setCategory('fixed')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'fixed' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>Fixa</button>
+                <button type="button" onClick={() => setCategory('single')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'single' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500'}`}>Avulsa</button>
+                <button type="button" onClick={() => setCategory('installment')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'installment' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500'}`}>Parcelada</button>
+                <button type="button" onClick={() => setCategory('fixed')} className={`py-2 text-sm font-bold rounded-md transition-all ${category === 'fixed' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500'}`}>Fixa</button>
               </div>
+          )}
+          
+          {isInstallmentChild && (
+             <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-xs border border-yellow-200">
+                Editando parcela {initialData.installmentCurrent}/{initialData.installmentTotal}.
+             </div>
           )}
 
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Descrição</label>
-            <input 
-              required
-              className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" 
-              value={desc} 
-              onChange={e => setDesc(e.target.value)}
-              placeholder="Ex: Mercado"
-            />
+            <input required className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Ex: Mercado" />
           </div>
 
           <div className="flex gap-4">
             <div className="flex-1">
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                {category === 'installment' ? 'Valor da Parcela' : 'Valor'}
-              </label>
-              <input 
-                type="number" step="0.01" required={category !== 'fixed' || fixedType === 'static'}
-                className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-                value={amount}
-                onChange={e => setAmount(e.target.value)} 
-                disabled={category === 'fixed' && fixedType === 'variable' && !initialData} // Desabilita valor se for criar fixa variável nova (inicia com 0)
-                placeholder={category === 'fixed' && fixedType === 'variable' && !initialData ? "Inicia em 0.00" : "0.00"}
-              />
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{category === 'installment' ? 'Valor da Parcela' : 'Valor'}</label>
+              <input type="number" step="0.01" required={category !== 'fixed' || fixedType === 'static'} className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" value={amount} onChange={e => setAmount(e.target.value)} disabled={(category === 'fixed' && fixedType === 'variable' && !initialData) || isInstallmentChild} placeholder="0.00" />
             </div>
-            
             <div className="flex-1">
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo</label>
-              <select className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none" value={type} onChange={e => setType(e.target.value)}>
+              <select className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none" value={type} onChange={e => setType(e.target.value)} disabled={isInstallmentChild}>
                 <option value="expense">Débito (-)</option>
                 <option value="income">Crédito (+)</option>
               </select>
             </div>
           </div>
 
-          {/* CAMPOS ESPECÍFICOS DE PARCELADO */}
-          {category === 'installment' && !initialData && (
+          {category === 'installment' && (
              <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Qtd. Parcelas</label>
-                <input 
-                    type="number" min="2" max="60" required
-                    className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-                    value={installments}
-                    onChange={e => setInstallments(e.target.value)} 
-                />
+                <input type="number" min="2" max="60" required className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" value={installments} onChange={e => setInstallments(e.target.value)} disabled={isInstallmentChild} />
              </div>
           )}
 
-          {/* CAMPOS ESPECÍFICOS DE FIXA */}
           {category === 'fixed' && (
              <div className="bg-blue-50 p-3 rounded-xl flex flex-col gap-2">
-                <p className="text-xs font-bold text-blue-900 uppercase">Configuração Fixa</p>
+                <p className="text-xs font-bold text-blue-900 uppercase">Configuração de valor de conta Fixa</p>
                 <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input 
-                            type="radio" 
-                            name="fixType" 
-                            checked={fixedType === 'static'} 
-                            onChange={() => setFixedType('static')}
-                            className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Valor Fixo (Internet)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <input 
-                            type="radio" 
-                            name="fixType" 
-                            checked={fixedType === 'variable'} 
-                            onChange={() => { setFixedType('variable'); if(!initialData) setAmount(''); }}
-                            className="text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Valor Variável (Cartão)</span>
-                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="radio" checked={fixedType === 'static'} onChange={() => setFixedType('static')} className="text-blue-600 focus:ring-blue-500" /><span className="text-sm text-gray-700">Fixo</span></label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="radio" checked={fixedType === 'variable'} onChange={() => { setFixedType('variable'); if(!initialData) setAmount(''); }} className="text-blue-600 focus:ring-blue-500" /><span className="text-sm text-gray-700">Variável (Ex: cartão)</span></label>
                 </div>
-                {fixedType === 'variable' && (
-                    <p className="text-xs text-blue-600 mt-1">
-                        {initialData 
-                            ? "Alterando o valor apenas deste mês." 
-                            : "A conta será criada com valor R$ 0,00 e você deve atualizar manualmente a cada mês."}
-                    </p>
-                )}
              </div>
           )}
 
-          <div className="pt-4 flex justify-end gap-3">
-            <button type="button" onClick={onClose} className="text-gray-500 font-medium px-4 hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
-            <button type="submit" disabled={loading} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 disabled:opacity-70">
-              {loading ? 'Salvando...' : 'Confirmar'}
-            </button>
+          <div className="pt-4 flex justify-between items-center">
+            <div className="flex gap-2">
+                
+                {/* BOTÃO OU AVISO */}
+                {isInstallmentChild && initialData.groupId && (
+                    isLiquidated ? (
+                         <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-200 flex items-center gap-1 cursor-not-allowed">
+                            ✓ Conta liquidada
+                        </span>
+                    ) : (
+                        <button type="button" onClick={handleLiquidate} className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-200 hover:bg-orange-100">
+                            ⚡ Liquidar
+                        </button>
+                    )
+                )}
+                
+                {initialData && initialData.isFixed && !initialData.endDate && (
+                    <button type="button" onClick={handleStopRecurring} className="text-xs font-bold text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 hover:bg-red-100">⛔ Encerrar</button>
+                )}
+            </div>
+
+            <div className="flex gap-3">
+                <button type="button" onClick={onClose} className="bg-gray-200 text-gray-600 rounded-lg font-medium px-4 hover:bg-gray-300">Cancelar</button>
+                <button type="submit" disabled={loading} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-70">{loading ? '...' : 'Salvar'}</button>
+            </div>
           </div>
         </form>
       </div>

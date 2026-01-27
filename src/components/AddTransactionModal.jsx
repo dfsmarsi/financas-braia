@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch } from 'firebase/firestore'; 
+import React, { useState, useEffect, useRef } from 'react';
+import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore'; // Adicionei arrayRemove
 import { db } from '../services/firebaseConfig';
 import { useAuth } from '../services/auth';
 import { addMonths, format, subMonths } from 'date-fns';
 
 const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) => {
   const { user } = useAuth();
-  
+  const amountInputRef = useRef(null);
+
   const [category, setCategory] = useState('single'); 
   const [desc, setDesc] = useState('');
   const [amount, setAmount] = useState('');
@@ -15,13 +16,18 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
   const [fixedType, setFixedType] = useState('static');
   const [loading, setLoading] = useState(false);
   
+  // Foco no Valor ao abrir
+  useEffect(() => {
+    if (amountInputRef.current) {
+        amountInputRef.current.focus();
+    }
+  }, []);
+
   const cleanDescription = (fullDesc) => {
     if (!fullDesc) return '';
-    // Limpa qualquer sufixo de liquidada antigo ou novo para permitir edição limpa do nome
     let cleaned = fullDesc.split(' Liquidada(as):')[0];
     cleaned = cleaned.split(' / Liquidada')[0];
     cleaned = cleaned.replace(/\s\(Liquidado\)$/, '');
-    // Remove numeração (X/Y)
     cleaned = cleaned.replace(/\s\(\d+\/\d+\)$/, '');
     return cleaned;
   };
@@ -59,14 +65,69 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     }
   }, [initialData, selectedDate]);
 
+  // Função PAGAR
+  const handlePay = async () => {
+    setLoading(true);
+    try {
+        const ref = doc(db, "transactions", initialData.id);
+        if (initialData.isFixed) {
+            const monthKey = format(selectedDate, 'yyyy-MM');
+            const currentOverrides = initialData.overrides || {};
+            await updateDoc(ref, {
+                overrides: { ...currentOverrides, [monthKey]: 0 },
+                paidMonths: arrayUnion(monthKey) 
+            });
+        } else {
+            await updateDoc(ref, { amount: 0, isPaid: true });
+        }
+        onSuccess();
+        onClose();
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao pagar conta.");
+    }
+    setLoading(false);
+  }
+
+  // Função DESMARCAR PAGA (NOVA)
+  const handleUnpay = async () => {
+    if(!confirm("Deseja desmarcar esta conta como paga? Para contas avulsas/parceladas, você precisará editar o valor manualmente depois.")) return;
+    setLoading(true);
+    try {
+        const ref = doc(db, "transactions", initialData.id);
+        
+        if (initialData.isFixed) {
+            const monthKey = format(selectedDate, 'yyyy-MM');
+            const currentOverrides = initialData.overrides || {};
+            
+            // Remove o override deste mês (volta ao valor original)
+            const newOverrides = { ...currentOverrides };
+            delete newOverrides[monthKey];
+
+            await updateDoc(ref, {
+                overrides: newOverrides,
+                paidMonths: arrayRemove(monthKey) // Remove da lista de pagos
+            });
+        } else {
+            // Para avulsas, apenas desmarca. O valor continua 0 até o usuário editar.
+            await updateDoc(ref, { isPaid: false });
+        }
+        
+        onSuccess();
+        onClose();
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao desmarcar pagamento.");
+    }
+    setLoading(false);
+  }
+
   const handleStopRecurring = async () => {
     if(!confirm("Deseja encerrar esta conta fixa? Ela deixará de aparecer nos próximos meses, mas o histórico será mantido.")) return;
     setLoading(true);
     try {
         const ref = doc(db, "transactions", initialData.id);
-        await updateDoc(ref, {
-            endDate: selectedDate 
-        });
+        await updateDoc(ref, { endDate: selectedDate });
         onSuccess();
         onClose();
     } catch (error) {
@@ -76,22 +137,17 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     setLoading(false);
   }
 
-  // --- LIQUIDAÇÃO LIMPA (Sem texto duplicado) ---
   const handleLiquidate = async () => {
     if(!confirm("Deseja liquidar todas as parcelas futuras? O valor restante será somado nesta conta.")) return;
     setLoading(true);
     try {
         const batch = writeBatch(db);
         if (initialData.groupId) {
-            const q = query(
-                collection(db, "transactions"), 
-                where("groupId", "==", initialData.groupId),
-                where("uid", "==", user.uid) 
-            );
+            const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
             const snapshot = await getDocs(q);
             
             let futureAmount = 0;
-            let liquidatedCount = 1; // Contando a atual + futuras
+            let liquidatedCount = 1; 
 
             snapshot.docs.forEach(docSnap => {
                 const data = docSnap.data();
@@ -103,9 +159,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
             });
             
             const currentRef = doc(db, "transactions", initialData.id);
-            
-            // AQUI MUDOU: Apenas Nome + (X/Y). Nada de texto "Liquidada".
-            // A informação vai apenas nas flags isLiquidated/liquidatedCount
             const installmentInfo = ` (${initialData.installmentCurrent}/${initialData.installmentTotal})`;
             const cleanFullDescription = `${desc}${installmentInfo}`;
 
@@ -137,7 +190,7 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     try {
       const baseData = {
         uid: user.uid,
-        description: desc,
+        description: desc, 
         type,
         date: initialData ? initialData.date : (selectedDate || new Date()), 
       };
@@ -145,7 +198,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
       if (initialData) {
         const ref = doc(db, "transactions", initialData.id);
         
-        // CENÁRIO 1: Conta Fixa Variável
         if (initialData.isFixedVariable && category === 'fixed' && fixedType === 'variable') {
             const monthKey = format(selectedDate, 'yyyy-MM');
             const currentOverrides = initialData.overrides || {};
@@ -154,7 +206,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 overrides: { ...currentOverrides, [monthKey]: parseFloat(amount) }
             });
         } 
-        // CENÁRIO 2: Parcela 1 (Recriação)
         else if (initialData.installmentCurrent === 1 && category === 'installment' && initialData.groupId) {
              if(confirm("Ao editar a parcela 1, toda a série será recriada. Continuar?")) {
                 const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
@@ -181,7 +232,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 await Promise.all(batchNew);
              }
         }
-        // CENÁRIO 3: Edição Normal
         else {
             if (category === 'installment' && initialData.groupId) {
                 const batch = writeBatch(db);
@@ -190,11 +240,7 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
 
                 snap.docs.forEach(docSnap => {
                     const data = docSnap.data();
-                    
-                    // AQUI MUDOU: Sempre salva limpo: Nome (X/Y)
-                    // Se a conta for liquidada, ela já tem a flag no banco, então a Tag laranja vai aparecer.
-                    // Não precisamos escrever no texto.
-                    const newNameWithNumber = `${desc} (${data.installmentCurrent}/${data.installmentTotal})`;
+                    let newNameWithNumber = `${desc} (${data.installmentCurrent}/${data.installmentTotal})`;
                     
                     if (docSnap.id === initialData.id) {
                         batch.update(docSnap.ref, {
@@ -223,7 +269,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
         }
 
       } else {
-        // CREATE
         if (category === 'single') {
             await addDoc(collection(db, "transactions"), { ...baseData, amount: parseFloat(amount), isFixed: false });
         } 
@@ -261,7 +306,17 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
   };
 
   const isInstallmentChild = initialData && initialData.installmentCurrent > 1;
-  const isLiquidated = initialData && (initialData.isLiquidated || (initialData.description && initialData.description.includes('Liquidada')));
+  const isLiquidated = initialData && (initialData.isLiquidated || (initialData.description && initialData.description.toLowerCase().includes('liquidada')));
+  
+  let isPaid = false;
+  if (initialData) {
+      if (initialData.isFixed) {
+          const monthKey = format(selectedDate, 'yyyy-MM');
+          if (initialData.paidMonths && initialData.paidMonths.includes(monthKey)) isPaid = true;
+      } else {
+          isPaid = initialData.isPaid;
+      }
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
@@ -287,13 +342,21 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
 
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Descrição</label>
-            <input required className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Ex: Mercado" />
+            <input 
+                required 
+                className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 uppercase" 
+                value={desc} 
+                onChange={e => setDesc(e.target.value.toUpperCase())} 
+                placeholder="Ex: MERCADO" 
+            />
           </div>
 
           <div className="flex gap-4">
             <div className="flex-1">
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{category === 'installment' ? 'Valor da Parcela' : 'Valor'}</label>
-              <input type="number" step="0.01" required={category !== 'fixed' || fixedType === 'static'} className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" value={amount} onChange={e => setAmount(e.target.value)} disabled={(category === 'fixed' && fixedType === 'variable' && !initialData) || isInstallmentChild} placeholder="0.00" />
+              
+              <input ref={amountInputRef} type="number" step="0.01" required={category !== 'fixed' || fixedType === 'static'} className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" value={amount} onChange={e => setAmount(e.target.value)} disabled={(category === 'fixed' && fixedType === 'variable' && !initialData) || isInstallmentChild} placeholder="0.00" />
+            
             </div>
             <div className="flex-1">
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo</label>
@@ -323,16 +386,27 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
 
           <div className="pt-4 flex justify-between items-center">
             <div className="flex gap-2">
-                
-                {/* BOTÃO OU AVISO */}
-                {isInstallmentChild && initialData.groupId && (
+                {isInstallmentChild && initialData.groupId && !isPaid && (
                     isLiquidated ? (
                          <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-200 flex items-center gap-1 cursor-not-allowed">
-                            ✓ Conta liquidada
+                            ✓ Liquidada
                         </span>
                     ) : (
                         <button type="button" onClick={handleLiquidate} className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-200 hover:bg-orange-100">
                             ⚡ Liquidar
+                        </button>
+                    )
+                )}
+
+                {initialData && (
+                    isPaid ? (
+                        /* MUDANÇA: Botão para desmarcar */
+                        <button type="button" onClick={handleUnpay} className="text-xs font-bold text-green-700 bg-green-50 px-3 py-2 rounded-lg border border-green-300 hover:bg-green-100 flex items-center gap-1">
+                            ↩ Desfazer
+                        </button>
+                    ) : (
+                        <button type="button" onClick={handlePay} className="text-xs font-bold text-green-600 bg-green-50 px-3 py-2 rounded-lg border border-green-200 hover:bg-green-100">
+                            💲 Pagar
                         </button>
                     )
                 )}

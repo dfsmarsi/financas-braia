@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc, writeBatch } from 'firebase/firestore'; 
+import { collection, query, where, getDocs, doc, setDoc, getDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore'; 
 import { db, auth } from '../services/firebaseConfig';
 import { signOut } from 'firebase/auth'; 
-import { addMonths } from 'date-fns';
+import { addMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, User } from 'lucide-react'; 
 import MonthCard from '../components/MonthCard';
@@ -11,6 +11,7 @@ import AddTransactionModal from '../components/AddTransactionModal';
 const DashBoard = () => {
   const [salary, setSalary] = useState(0);
   const [monthsToShow, setMonthsToShow] = useState(12);
+  const [startMonth, setStartMonth] = useState(new Date()); // Controla o primeiro mês visível
   const [transactions, setTransactions] = useState([]);
   const [displayName, setDisplayName] = useState('');
   
@@ -31,7 +32,14 @@ const DashBoard = () => {
       const data = userDoc.data();
       setSalary(data.salary || 0);
       if (data.monthsToShow) setMonthsToShow(data.monthsToShow);
-      if (data.displayName) finalName = data.displayName; 
+      if (data.displayName) finalName = data.displayName;
+      
+      // Carrega o mês de início salvo, ou usa o atual se não tiver
+      if (data.startMonth) {
+          setStartMonth(data.startMonth.toDate());
+      } else {
+          setStartMonth(new Date());
+      }
     }
     
     setDisplayName(finalName);
@@ -48,35 +56,58 @@ const DashBoard = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  useEffect(() => {
-    const scrollTimer = setTimeout(() => {
-        const currentCard = document.getElementById('month-card-0'); 
-        if (currentCard) {
-            currentCard.scrollIntoView({ 
-                behavior: 'smooth', 
-                inline: 'center', 
-                block: 'nearest' 
-            });
-        }
-    }, 800); 
-    return () => clearTimeout(scrollTimer);
-  }, [transactions, monthsToShow]);
+  // Função para FECHAR O MÊS (Apaga dados e avança)
+  const handleCloseMonth = async (dateToClose) => {
+    const confirmText = "Tem certeza que deseja fechar este mês?\n\nTodas as contas deste mês serão apagadas permanentemente (inclusive a parcela deste mês de contas parceladas).\nO dashboard começará a partir do mês seguinte.";
+    if (!confirm(confirmText)) return;
 
-  // --- DELETE ATUALIZADO (Sempre apaga o grupo todo se for parcelado) ---
+    const start = startOfMonth(dateToClose);
+    const end = endOfMonth(dateToClose);
+    const batch = writeBatch(db);
+
+    // 1. Encontrar contas que caem neste mês para apagar
+    // Filtramos no front pelo array transactions para garantir a logica de datas correta
+    const toDelete = transactions.filter(t => {
+        // Se for Fixa, NÃO apaga o documento mestre, apenas ignora visualmente (o sistema de MonthCard já filtra por data)
+        // Mas se quisermos limpar overrides antigos, seria complexo. 
+        // Para simplificar: Contas Fixas não são deletadas, apenas parceladas e avulsas.
+        if (t.isFixed) return false;
+
+        const tDate = t.date.toDate();
+        return tDate >= start && tDate <= end;
+    });
+
+    toDelete.forEach(t => {
+        const ref = doc(db, "transactions", t.id);
+        batch.delete(ref);
+    });
+
+    // 2. Atualizar o usuário para começar no próximo mês
+    const nextMonth = addMonths(start, 1);
+    const userRef = doc(db, "users", user.uid);
+    
+    // Atualiza no banco
+    batch.update(userRef, { startMonth: Timestamp.fromDate(nextMonth) });
+
+    await batch.commit();
+    
+    // Atualiza estado local
+    setStartMonth(nextMonth);
+    fetchData(); // Recarrega para limpar
+  };
+
   const handleDelete = async (transaction) => {
     if(!confirm("Tem certeza que deseja apagar? Se for parcelada, apagará todas.")) return;
 
     const isGroup = transaction.groupId && transaction.installmentTotal;
     
     if (isGroup) {
-        // Apaga TODAS as parcelas do grupo automaticamente
         const q = query(collection(db, "transactions"), where("groupId", "==", transaction.groupId), where("uid", "==", user.uid));
         const snap = await getDocs(q);
         const batch = writeBatch(db);
         snap.docs.forEach(d => batch.delete(d.ref));
         await batch.commit();
     } else {
-        // Apaga conta avulsa ou fixa
         await deleteDoc(doc(db, "transactions", transaction.id));
     }
     
@@ -136,10 +167,11 @@ const DashBoard = () => {
     setModalData({ isOpen: false, date: null, transaction: null });
   }
 
-  const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(new Date(), i));
+  // Gera os meses a partir do startMonth salvo no banco
+  const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(startMonth, i));
 
   return (
-    <div className="min-h-screen bg-blue-50 flex flex-col">
+    <div className="h-[100dvh] bg-blue-50 flex flex-col overflow-hidden">
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
           height: 12px;
@@ -158,7 +190,7 @@ const DashBoard = () => {
         }
       `}</style>
 
-      <header className="bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md">
+      <header className="shrink-0 bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md z-10">
         
         <div 
             onClick={handleUpdateName} 
@@ -189,12 +221,6 @@ const DashBoard = () => {
             >
                 💰 R$ {parseFloat(salary).toFixed(2)}
             </button>
-            <button 
-                onClick={() => navigate('/history')} 
-                className="text-xs bg-white text-blue-600 px-3 py-2 rounded font-bold hover:bg-blue-50 shadow-sm"
-            >
-                Histórico
-            </button>
             
             <button 
                 onClick={handleLogout} 
@@ -208,13 +234,13 @@ const DashBoard = () => {
 
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 items-start custom-scrollbar pb-8"
+        className="flex-1 h-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-6 items-start custom-scrollbar"
       >
         {months.map((date, i) => (
           <div 
             key={i} 
             id={'month-card-' + i} 
-            className="snap-center shrink-0 w-[90vw] md:w-[400px]"
+            className="snap-center shrink-0 w-[90vw] md:w-[400px] h-full"
           >
             <MonthCard 
                 date={date} 
@@ -222,7 +248,9 @@ const DashBoard = () => {
                 allTransactions={transactions} 
                 onDelete={handleDelete} 
                 onEdit={handleEdit}
-                onAdd={handleNew} 
+                onAdd={handleNew}
+                // Passa a função de fechar apenas para o primeiro card (índice 0)
+                onCloseMonth={i === 0 ? () => handleCloseMonth(date) : null}
             />
           </div>
         ))}

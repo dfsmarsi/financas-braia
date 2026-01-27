@@ -11,7 +11,7 @@ import AddTransactionModal from '../components/AddTransactionModal';
 const DashBoard = () => {
   const [salary, setSalary] = useState(0);
   const [monthsToShow, setMonthsToShow] = useState(12);
-  const [startMonth, setStartMonth] = useState(new Date()); // Controla o primeiro mês visível
+  const [startMonth, setStartMonth] = useState(new Date()); 
   const [transactions, setTransactions] = useState([]);
   const [displayName, setDisplayName] = useState('');
   
@@ -34,7 +34,6 @@ const DashBoard = () => {
       if (data.monthsToShow) setMonthsToShow(data.monthsToShow);
       if (data.displayName) finalName = data.displayName;
       
-      // Carrega o mês de início salvo, ou usa o atual se não tiver
       if (data.startMonth) {
           setStartMonth(data.startMonth.toDate());
       } else {
@@ -56,7 +55,20 @@ const DashBoard = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Função para FECHAR O MÊS (Apaga dados e avança)
+  useEffect(() => {
+    const scrollTimer = setTimeout(() => {
+        const currentCard = document.getElementById('month-card-0'); 
+        if (currentCard) {
+            currentCard.scrollIntoView({ 
+                behavior: 'smooth', 
+                inline: 'center', 
+                block: 'nearest' 
+            });
+        }
+    }, 800); 
+    return () => clearTimeout(scrollTimer);
+  }, [transactions, monthsToShow]);
+
   const handleCloseMonth = async (dateToClose) => {
     const confirmText = "Tem certeza que deseja fechar este mês?\n\nTodas as contas deste mês serão apagadas permanentemente (inclusive a parcela deste mês de contas parceladas).\nO dashboard começará a partir do mês seguinte.";
     if (!confirm(confirmText)) return;
@@ -65,14 +77,8 @@ const DashBoard = () => {
     const end = endOfMonth(dateToClose);
     const batch = writeBatch(db);
 
-    // 1. Encontrar contas que caem neste mês para apagar
-    // Filtramos no front pelo array transactions para garantir a logica de datas correta
     const toDelete = transactions.filter(t => {
-        // Se for Fixa, NÃO apaga o documento mestre, apenas ignora visualmente (o sistema de MonthCard já filtra por data)
-        // Mas se quisermos limpar overrides antigos, seria complexo. 
-        // Para simplificar: Contas Fixas não são deletadas, apenas parceladas e avulsas.
         if (t.isFixed) return false;
-
         const tDate = t.date.toDate();
         return tDate >= start && tDate <= end;
     });
@@ -82,18 +88,14 @@ const DashBoard = () => {
         batch.delete(ref);
     });
 
-    // 2. Atualizar o usuário para começar no próximo mês
     const nextMonth = addMonths(start, 1);
     const userRef = doc(db, "users", user.uid);
     
-    // Atualiza no banco
     batch.update(userRef, { startMonth: Timestamp.fromDate(nextMonth) });
 
     await batch.commit();
-    
-    // Atualiza estado local
     setStartMonth(nextMonth);
-    fetchData(); // Recarrega para limpar
+    fetchData();
   };
 
   const handleDelete = async (transaction) => {
@@ -167,11 +169,11 @@ const DashBoard = () => {
     setModalData({ isOpen: false, date: null, transaction: null });
   }
 
-  // Gera os meses a partir do startMonth salvo no banco
   const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(startMonth, i));
 
   return (
-    <div className="h-[100dvh] bg-blue-50 flex flex-col overflow-hidden">
+    // AJUSTE 1: max-w-full para evitar scroll horizontal na página
+    <div className="h-[100dvh] w-full max-w-full bg-blue-50 flex flex-col overflow-hidden">
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
           height: 12px;
@@ -190,7 +192,8 @@ const DashBoard = () => {
         }
       `}</style>
 
-      <header className="shrink-0 bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md z-10">
+      {/* HEADER (shrink-0 garante que ele não diminui, mas ele empurra o resto pra baixo) */}
+      <header className="shrink-0 bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md z-10 w-full">
         
         <div 
             onClick={handleUpdateName} 
@@ -232,14 +235,19 @@ const DashBoard = () => {
         </div>
       </header>
 
+      {/* AJUSTE 2 E 3: flex-1 + min-h-0. 
+         - min-h-0 permite que este container encolha quando o header crescer.
+         - Removi o h-full daqui para deixar o flex controlar.
+      */}
       <div 
         ref={scrollRef}
-        className="flex-1 h-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-6 items-start custom-scrollbar"
+        className="flex-1 min-h-0 w-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-3 items-start custom-scrollbar"
       >
         {months.map((date, i) => (
           <div 
             key={i} 
             id={'month-card-' + i} 
+            // O card interno tem h-full para ocupar todo o espaço vertical disponível que o flex-1 cedeu
             className="snap-center shrink-0 w-[90vw] md:w-[400px] h-full"
           >
             <MonthCard 
@@ -249,7 +257,6 @@ const DashBoard = () => {
                 onDelete={handleDelete} 
                 onEdit={handleEdit}
                 onAdd={handleNew}
-                // Passa a função de fechar apenas para o primeiro card (índice 0)
                 onCloseMonth={i === 0 ? () => handleCloseMonth(date) : null}
             />
           </div>

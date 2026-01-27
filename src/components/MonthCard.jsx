@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { format, isSameMonth, startOfMonth, isBefore, isAfter } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Plus, Pencil, Trash2, Lock } from 'lucide-react'; 
+import { Plus, Pencil, Trash2, CalendarCheck2 } from 'lucide-react'; 
 
 const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onCloseMonth }) => {
   
@@ -95,9 +95,9 @@ const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onC
                 <button 
                     onClick={onCloseMonth} 
                     title="Fechar este mês financeiramente"
-                    className="bg-red-500 text-white mr-2 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-red-600 transition-all shadow-sm border border-red-400"
+                    className="bg-green-500 text-white mr-2 w-9 h-9 rounded-lg flex items-center justify-center hover:bg-green-600 transition-all shadow-sm border border-green-600"
                 >
-                    <Lock size={18} strokeWidth={2.5} />
+                    <CalendarCheck2 size={18} strokeWidth={2.5} />
                 </button>
             )}
 

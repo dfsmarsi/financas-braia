@@ -247,7 +247,7 @@ const DashBoard = () => {
             
             <button 
                 onClick={handleLogout} 
-                className="ml-2 text-xs bg-red-500 hover:bg-red-600 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
+                className="ml-2 text-xs bg-red-600 hover:bg-red-400 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
                 title="Sair"
             >
                 <LogOut size={16} />

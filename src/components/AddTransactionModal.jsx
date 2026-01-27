@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore'; // Adicionei arrayRemove
+import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore'; 
 import { db } from '../services/firebaseConfig';
 import { useAuth } from '../services/auth';
 import { addMonths, format, subMonths } from 'date-fns';
@@ -89,7 +89,7 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     setLoading(false);
   }
 
-  // Função DESMARCAR PAGA (NOVA)
+  // Função DESMARCAR PAGA
   const handleUnpay = async () => {
     if(!confirm("Deseja desmarcar esta conta como paga? Para contas avulsas/parceladas, você precisará editar o valor manualmente depois.")) return;
     setLoading(true);
@@ -398,9 +398,9 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                     )
                 )}
 
-                {initialData && (
+                {/* SÓ MOSTRA SE FOR DESPESA */}
+                {initialData && type === 'expense' && (
                     isPaid ? (
-                        /* MUDANÇA: Botão para desmarcar */
                         <button type="button" onClick={handleUnpay} className="text-xs font-bold text-green-700 bg-green-50 px-2 py-2 rounded-lg border border-green-300 hover:bg-green-100 flex items-center">
                             ↩ Desfazer
                         </button>

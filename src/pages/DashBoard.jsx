@@ -17,7 +17,11 @@ const DashBoard = () => {
   
   const [modalData, setModalData] = useState({ isOpen: false, date: null, transaction: null });
   
+  // Ref para controlar o scroll
   const scrollRef = useRef(null);
+  // Ref para impedir scroll indesejado ao editar
+  const hasScrolledRef = useRef(false);
+
   const navigate = useNavigate();
   const user = auth.currentUser;
 
@@ -55,7 +59,11 @@ const DashBoard = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // --- CORREÇÃO DEFINITIVA DE SCROLL ---
   useEffect(() => {
+    // Se já rolou uma vez e a trava está ativa, NÃO rola de novo
+    if (hasScrolledRef.current) return;
+
     const scrollTimer = setTimeout(() => {
         const currentCard = document.getElementById('month-card-0'); 
         if (currentCard) {
@@ -64,10 +72,12 @@ const DashBoard = () => {
                 inline: 'center', 
                 block: 'nearest' 
             });
+            // Ativa a trava para que edições futuras não rolem a tela
+            hasScrolledRef.current = true;
         }
     }, 800); 
     return () => clearTimeout(scrollTimer);
-  }, [transactions, monthsToShow]);
+  }, [startMonth]); 
 
   const handleCloseMonth = async (dateToClose) => {
     const confirmText = "Tem certeza que deseja fechar este mês?\n\nTodas as contas deste mês serão apagadas permanentemente (inclusive a parcela deste mês de contas parceladas).\nO dashboard começará a partir do mês seguinte.";
@@ -94,6 +104,10 @@ const DashBoard = () => {
     batch.update(userRef, { startMonth: Timestamp.fromDate(nextMonth) });
 
     await batch.commit();
+
+    // DESTRAVA O SCROLL: Como mudamos de mês, queremos que role para o novo início
+    hasScrolledRef.current = false;
+    
     setStartMonth(nextMonth);
     fetchData();
   };
@@ -172,10 +186,8 @@ const DashBoard = () => {
   const months = Array.from({ length: monthsToShow }, (_, i) => addMonths(startMonth, i));
 
   return (
-    // AJUSTE CRÍTICO: 'fixed inset-0' trava a tela e impede rolagem do body
     <div className="fixed inset-0 bg-blue-50 flex flex-col overflow-hidden">
       <style>{`
-        /* Bloqueia o Pull-to-Refresh e rolagem do Body */
         html, body {
           overscroll-behavior-y: none;
           overflow: hidden;
@@ -201,7 +213,6 @@ const DashBoard = () => {
         }
       `}</style>
 
-      {/* HEADER */}
       <header className="shrink-0 bg-blue-600 p-4 text-white flex flex-col md:flex-row gap-4 justify-between items-center shadow-md z-10 w-full">
         
         <div 
@@ -244,7 +255,6 @@ const DashBoard = () => {
         </div>
       </header>
 
-      {/* ÁREA DE SCROLL */}
       <div 
         ref={scrollRef}
         className="flex-1 min-h-0 w-full overflow-x-auto snap-x snap-mandatory flex gap-4 p-4 pb-6 items-start custom-scrollbar"

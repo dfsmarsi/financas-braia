@@ -384,8 +384,8 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
              </div>
           )}
 
-          <div className="pt-4 flex justify-between items-center">
-            <div className="flex gap-2">
+          <div className="pt-2 flex justify-between items-center">
+            <div className="flex gap-1">
                 {isInstallmentChild && initialData.groupId && !isPaid && (
                     isLiquidated ? (
                          <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg border border-orange-200 flex items-center gap-1 cursor-not-allowed">
@@ -401,11 +401,11 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 {initialData && (
                     isPaid ? (
                         /* MUDANÇA: Botão para desmarcar */
-                        <button type="button" onClick={handleUnpay} className="text-xs font-bold text-green-700 bg-green-50 px-3 py-2 rounded-lg border border-green-300 hover:bg-green-100 flex items-center gap-1">
+                        <button type="button" onClick={handleUnpay} className="text-xs font-bold text-green-700 bg-green-50 px-2 py-2 rounded-lg border border-green-300 hover:bg-green-100 flex items-center">
                             ↩ Desfazer
                         </button>
                     ) : (
-                        <button type="button" onClick={handlePay} className="text-xs font-bold text-green-600 bg-green-50 px-3 py-2 rounded-lg border border-green-200 hover:bg-green-100">
+                        <button type="button" onClick={handlePay} className="text-xs font-bold text-green-600 bg-green-50 px-2 py-2 rounded-lg border border-green-200 hover:bg-green-100">
                             💲 Pagar
                         </button>
                     )
@@ -416,9 +416,9 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 )}
             </div>
 
-            <div className="flex gap-3">
-                <button type="button" onClick={onClose} className="bg-gray-200 text-gray-600 rounded-lg font-medium px-4 hover:bg-gray-300">Cancelar</button>
-                <button type="submit" disabled={loading} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-70">{loading ? '...' : 'Salvar'}</button>
+            <div className="flex ml-7 gap-2">
+                <button type="button" onClick={onClose} className="bg-gray-200 text-gray-600 rounded-lg font-medium px-3 hover:bg-gray-300">Cancelar</button>
+                <button type="submit" disabled={loading} className="bg-blue-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-70">{loading ? '...' : 'Salvar'}</button>
             </div>
           </div>
         </form>

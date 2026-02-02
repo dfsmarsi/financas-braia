@@ -17,9 +17,7 @@ const DashBoard = () => {
   
   const [modalData, setModalData] = useState({ isOpen: false, date: null, transaction: null });
   
-  // Ref para controlar o scroll
   const scrollRef = useRef(null);
-  // Ref para impedir scroll indesejado ao editar
   const hasScrolledRef = useRef(false);
 
   const navigate = useNavigate();
@@ -28,28 +26,51 @@ const DashBoard = () => {
   const fetchData = async () => {
     if (!user) return;
 
-    const emailNick = user.email.split('@')[0];
+    // 1. Busca Transações primeiro (precisamos delas para a lógica de data)
+    const q = query(collection(db, "transactions"), where("uid", "==", user.uid));
+    const snap = await getDocs(q);
+    const loadedTransactions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    setTransactions(loadedTransactions);
+
+    // 2. Busca Dados do Usuário
+    const userDocRef = doc(db, "users", user.uid);
+    const userDoc = await getDoc(userDocRef);
+
+    let emailNick = user.email.split('@')[0];
     let finalName = emailNick.charAt(0).toUpperCase() + emailNick.slice(1);
 
-    const userDoc = await getDoc(doc(db, "users", user.uid));
     if (userDoc.exists()) {
       const data = userDoc.data();
       setSalary(data.salary || 0);
       if (data.monthsToShow) setMonthsToShow(data.monthsToShow);
       if (data.displayName) finalName = data.displayName;
       
+      // --- LÓGICA DE DATA INICIAL (START MONTH) ---
       if (data.startMonth) {
+          // CASO 1: Usuário já fechou um mês manualmente. Respeitamos a data salva.
           setStartMonth(data.startMonth.toDate());
       } else {
-          setStartMonth(new Date());
+          // CASO 2: Nenhum mês fechado. Calculamos dinamicamente.
+          if (loadedTransactions.length > 0) {
+              // Procura a transação mais antiga de todas
+              const oldestDate = loadedTransactions.reduce((earliest, t) => {
+                  const tDate = t.date.toDate();
+                  return tDate < earliest ? tDate : earliest;
+              }, new Date());
+              
+              // Define o início como o mês dessa transação mais antiga
+              setStartMonth(startOfMonth(oldestDate));
+          } else {
+              // Se não tem nenhuma transação, começa hoje
+              setStartMonth(startOfMonth(new Date()));
+          }
       }
+    } else {
+       // Usuário novo sem cadastro no banco
+       setStartMonth(startOfMonth(new Date()));
     }
     
     setDisplayName(finalName);
-
-    const q = query(collection(db, "transactions"), where("uid", "==", user.uid));
-    const snap = await getDocs(q);
-    setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
   useEffect(() => { 
@@ -59,9 +80,7 @@ const DashBoard = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // --- CORREÇÃO DEFINITIVA DE SCROLL ---
   useEffect(() => {
-    // Se já rolou uma vez e a trava está ativa, NÃO rola de novo
     if (hasScrolledRef.current) return;
 
     const scrollTimer = setTimeout(() => {
@@ -72,7 +91,6 @@ const DashBoard = () => {
                 inline: 'center', 
                 block: 'nearest' 
             });
-            // Ativa a trava para que edições futuras não rolem a tela
             hasScrolledRef.current = true;
         }
     }, 800); 
@@ -101,13 +119,12 @@ const DashBoard = () => {
     const nextMonth = addMonths(start, 1);
     const userRef = doc(db, "users", user.uid);
     
+    // Salva explicitamente o novo mês de início no banco
     batch.update(userRef, { startMonth: Timestamp.fromDate(nextMonth) });
 
     await batch.commit();
 
-    // DESTRAVA O SCROLL: Como mudamos de mês, queremos que role para o novo início
     hasScrolledRef.current = false;
-    
     setStartMonth(nextMonth);
     fetchData();
   };
@@ -247,7 +264,7 @@ const DashBoard = () => {
             
             <button 
                 onClick={handleLogout} 
-                className="ml-2 text-xs bg-red-600 hover:bg-red-400 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
+                className="ml-2 text-xs bg-red-500 hover:bg-red-600 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
                 title="Sair"
             >
                 <LogOut size={16} />

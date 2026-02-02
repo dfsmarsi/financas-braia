@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore'; 
+import { addDoc, collection, doc, updateDoc, getDocs, query, where, writeBatch, arrayUnion, arrayRemove, deleteDoc } from 'firebase/firestore'; 
 import { db } from '../services/firebaseConfig';
 import { useAuth } from '../services/auth';
-import { addMonths, format, subMonths } from 'date-fns';
+import { addMonths, format } from 'date-fns';
+import { Trash2 } from 'lucide-react';
 
 const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) => {
   const { user } = useAuth();
@@ -65,7 +66,34 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     }
   }, [initialData, selectedDate]);
 
-  // Função PAGAR
+  // Função EXCLUIR
+  const handleDeleteTransaction = async () => {
+    const confirmMsg = initialData.groupId
+        ? "Tem certeza que deseja apagar? Isso apagará TODAS as parcelas deste lançamento."
+        : "Tem certeza que deseja apagar este lançamento?";
+
+    if(!confirm(confirmMsg)) return;
+
+    setLoading(true);
+    try {
+        if (initialData.groupId) {
+            const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
+            const snap = await getDocs(q);
+            const batch = writeBatch(db);
+            snap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+        } else {
+            await deleteDoc(doc(db, "transactions", initialData.id));
+        }
+        onSuccess();
+        onClose();
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao excluir: " + error.message);
+    }
+    setLoading(false);
+  };
+
   const handlePay = async () => {
     setLoading(true);
     try {
@@ -89,30 +117,23 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
     setLoading(false);
   }
 
-  // Função DESMARCAR PAGA
   const handleUnpay = async () => {
     if(!confirm("Deseja desmarcar esta conta como paga? Para contas avulsas/parceladas, você precisará editar o valor manualmente depois.")) return;
     setLoading(true);
     try {
         const ref = doc(db, "transactions", initialData.id);
-        
         if (initialData.isFixed) {
             const monthKey = format(selectedDate, 'yyyy-MM');
             const currentOverrides = initialData.overrides || {};
-            
-            // Remove o override deste mês (volta ao valor original)
             const newOverrides = { ...currentOverrides };
             delete newOverrides[monthKey];
-
             await updateDoc(ref, {
                 overrides: newOverrides,
-                paidMonths: arrayRemove(monthKey) // Remove da lista de pagos
+                paidMonths: arrayRemove(monthKey) 
             });
         } else {
-            // Para avulsas, apenas desmarca. O valor continua 0 até o usuário editar.
             await updateDoc(ref, { isPaid: false });
         }
-        
         onSuccess();
         onClose();
     } catch (error) {
@@ -145,10 +166,8 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
         if (initialData.groupId) {
             const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
             const snapshot = await getDocs(q);
-            
             let futureAmount = 0;
             let liquidatedCount = 1; 
-
             snapshot.docs.forEach(docSnap => {
                 const data = docSnap.data();
                 if (data.installmentCurrent > initialData.installmentCurrent) {
@@ -157,18 +176,15 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                     batch.delete(docSnap.ref); 
                 }
             });
-            
             const currentRef = doc(db, "transactions", initialData.id);
             const installmentInfo = ` (${initialData.installmentCurrent}/${initialData.installmentTotal})`;
             const cleanFullDescription = `${desc}${installmentInfo}`;
-
             batch.update(currentRef, {
                 amount: Number(initialData.amount) + futureAmount,
                 description: cleanFullDescription, 
                 isLiquidated: true,
                 liquidatedCount: liquidatedCount
             });
-            
             await batch.commit();
             onSuccess();
             onClose();
@@ -237,11 +253,9 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 const batch = writeBatch(db);
                 const q = query(collection(db, "transactions"), where("groupId", "==", initialData.groupId), where("uid", "==", user.uid));
                 const snap = await getDocs(q);
-
                 snap.docs.forEach(docSnap => {
                     const data = docSnap.data();
                     let newNameWithNumber = `${desc} (${data.installmentCurrent}/${data.installmentTotal})`;
-                    
                     if (docSnap.id === initialData.id) {
                         batch.update(docSnap.ref, {
                             description: newNameWithNumber,
@@ -267,7 +281,6 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
                 });
             }
         }
-
       } else {
         if (category === 'single') {
             await addDoc(collection(db, "transactions"), { ...baseData, amount: parseFloat(amount), isFixed: false });
@@ -321,9 +334,25 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
-        <h2 className="text-xl font-bold text-blue-900 mb-6">
-          {initialData ? 'Editar lançamento' : 'Novo lançamento'}
-        </h2>
+        
+        {/* --- MUDANÇA AQUI: CABEÇALHO COM BOTÃO DE EXCLUIR --- */}
+        <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-bold text-blue-900">
+                {initialData ? 'Editar lançamento' : 'Novo lançamento'}
+            </h2>
+
+            {/* Ícone de Lixeira no TOPO (só se estiver editando) */}
+            {initialData && (
+                <button 
+                    type="button" 
+                    onClick={handleDeleteTransaction} 
+                    className="p-2 text-red-500 bg-red-100 hover:bg-red-200 rounded-lg transition-colors"
+                    title="Excluir"
+                >
+                    <Trash2 size={22} />
+                </button>
+            )}
+        </div>
         
         <form onSubmit={handleSave} className="space-y-5">
           {!isInstallmentChild && (
@@ -354,9 +383,7 @@ const AddTransactionModal = ({ onClose, onSuccess, initialData, selectedDate }) 
           <div className="flex gap-4">
             <div className="flex-1">
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{category === 'installment' ? 'Valor da Parcela' : 'Valor'}</label>
-              
               <input ref={amountInputRef} type="number" step="0.01" required={category !== 'fixed' || fixedType === 'static'} className="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50" value={amount} onChange={e => setAmount(e.target.value)} disabled={(category === 'fixed' && fixedType === 'variable' && !initialData) || isInstallmentChild} placeholder="0.00" />
-            
             </div>
             <div className="flex-1">
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo</label>

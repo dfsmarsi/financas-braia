@@ -5,7 +5,7 @@ import { getFirestore } from "firebase/firestore";
 // SUBSTITUI COM AS TUAS CHAVES DO FIREBASE CONSOLE
 const firebaseConfig = {
   apiKey: "AIzaSyDjeACyWeUZir6oEizicQd_vzPTe_neIAE",
-  authDomain: "financas-braia.vercel.app",
+  authDomain: "financas-braia.firebaseapp.com",
   databaseURL: "https://financas-braia-default-rtdb.firebaseio.com",
   projectId: "financas-braia",
   storageBucket: "financas-braia.firebasestorage.app",

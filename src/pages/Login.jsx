@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../services/firebaseConfig';
+import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from '../services/firebaseConfig';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../services/auth';
 
@@ -9,50 +8,23 @@ const provider = new GoogleAuthProvider();
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const { user } = useAuth();
+  const { user, accessDenied } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (user) navigate('/');
   }, [user]);
 
-  // Verifica resultado de redirect ao carregar a página
-  useEffect(() => {
-    const checkRedirect = async () => {
-      try {
-        const result = await getRedirectResult(auth);
-        if (!result) return;
-        const snap = await getDoc(doc(db, 'allowedEmails', result.user.email));
-        if (!snap.exists()) {
-          await signOut(auth);
-          setError('Acesso não autorizado. Contacta o administrador.');
-        }
-      } catch (err) {
-        console.error(err);
-        setError('Erro ao entrar com Google. Tenta novamente.');
-      }
-    };
-    checkRedirect();
-  }, []);
-
   const handleGoogleLogin = async () => {
     setLoading(true);
-    setError('');
     try {
-      // Tenta popup primeiro; se bloqueado, usa redirect
-      const result = await signInWithPopup(auth, provider);
-      const snap = await getDoc(doc(db, 'allowedEmails', result.user.email));
-      if (!snap.exists()) {
-        await signOut(auth);
-        setError('Acesso não autorizado. Contacta o administrador.');
-      }
+      await signInWithPopup(auth, provider);
+      // auth.jsx trata o resultado via onAuthStateChanged
     } catch (err) {
       if (err.code === 'auth/popup-blocked') {
         await signInWithRedirect(auth, provider);
       } else if (err.code !== 'auth/popup-closed-by-user') {
         console.error(err);
-        setError('Erro ao entrar com Google. Tenta novamente.');
       }
     }
     setLoading(false);
@@ -64,9 +36,9 @@ const Login = () => {
         <h1 className="text-3xl font-bold text-blue-900 mb-2 text-center">Olá!</h1>
         <p className="text-gray-500 text-center mb-8 text-sm">Entre para gerir suas contas.</p>
 
-        {error && (
+        {accessDenied && (
           <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-6 text-center border border-red-100">
-            {error}
+            Acesso não autorizado. Contacta o administrador.
           </div>
         )}
 

@@ -1,11 +1,14 @@
 import React from 'react';
-import { format } from 'date-fns';
+import { format, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CalendarCheck, Plus, ArrowDown, ArrowUp } from 'lucide-react';
 
-const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onCloseMonth }) => {
-  
-  // --- LÓGICA DE FILTRO ---
+const MonthCard = ({ date, salary, allTransactions, billingOffset = 0, onDelete, onEdit, onAdd, onCloseMonth }) => {
+
+  // No modo fatura, o título avança 1 mês mas os dados ficam intocados
+  const displayDate = billingOffset > 0 ? addMonths(date, billingOffset) : date;
+
+  // --- LÓGICA DE FILTRO (inalterada — usa sempre a data real) ---
   const monthTransactions = allTransactions.filter(t => {
       const tDate = t.date.toDate();
       const tMonthKey = tDate.getFullYear() * 12 + tDate.getMonth();
@@ -46,15 +49,15 @@ const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onC
   });
 
   // Totais
+  const monthKey = format(date, 'yyyy-MM');
+
   const totalIncome = monthTransactions.filter(t => t.type === 'income').reduce((acc, t) => {
-      const monthKey = format(date, 'yyyy-MM');
-      const val = t.overrides && t.overrides[monthKey] !== undefined ? t.overrides[monthKey] : t.amount;
+      const val = t.overrides?.[monthKey] !== undefined ? t.overrides[monthKey] : t.amount;
       return acc + Number(val);
   }, 0);
 
   const totalExpense = monthTransactions.filter(t => t.type === 'expense').reduce((acc, t) => {
-      const monthKey = format(date, 'yyyy-MM');
-      const val = t.overrides && t.overrides[monthKey] !== undefined ? t.overrides[monthKey] : t.amount;
+      const val = t.overrides?.[monthKey] !== undefined ? t.overrides[monthKey] : t.amount;
       return acc + Number(val);
   }, 0);
 
@@ -85,9 +88,16 @@ const MonthCard = ({ date, salary, allTransactions, onDelete, onEdit, onAdd, onC
           <div className="flex items-center gap-4">
             <div>
               <h2 className="text-xl font-bold capitalize leading-tight">
-                {format(date, 'MMMM', { locale: ptBR })}
+                {format(displayDate, 'MMMM', { locale: ptBR })}
               </h2>
-              <p className="text-sm opacity-80 font-medium">{format(date, 'yyyy')}</p>
+              <p className="text-sm opacity-80 font-medium">
+                {format(displayDate, 'yyyy')}
+                {billingOffset > 0 && (
+                  <span className="ml-2 text-yellow-200 text-xs font-semibold capitalize">
+                    📋 ref. {format(date, 'MMM', { locale: ptBR })}
+                  </span>
+                )}
+              </p>
             </div>
             {onCloseMonth && (
                <button onClick={onCloseMonth} className="bg-blue-400 p-2 rounded-lg hover:bg-blue-300 transition-all ml-1" title="Fechar Mês">

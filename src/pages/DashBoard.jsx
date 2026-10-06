@@ -4,14 +4,17 @@ import { db, auth } from '../services/firebaseConfig';
 import { signOut } from 'firebase/auth'; 
 import { addMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, User } from 'lucide-react'; 
+import { LogOut, User, Shield } from 'lucide-react';
+import { useAuth } from '../services/auth';
 import MonthCard from '../components/MonthCard';
 import AddTransactionModal from '../components/AddTransactionModal';
 
 const DashBoard = () => {
+  const { role } = useAuth();
   const [salary, setSalary] = useState(0);
   const [monthsToShow, setMonthsToShow] = useState(12);
-  const [startMonth, setStartMonth] = useState(new Date()); 
+  const [startMonth, setStartMonth] = useState(new Date());
+  const [billingOffset, setBillingOffset] = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [displayName, setDisplayName] = useState('');
   
@@ -36,13 +39,14 @@ const DashBoard = () => {
     const userDocRef = doc(db, "users", user.uid);
     const userDoc = await getDoc(userDocRef);
 
-    let emailNick = user.email.split('@')[0];
-    let finalName = emailNick.charAt(0).toUpperCase() + emailNick.slice(1);
+    const rawName = user.displayName || user.email.split('@')[0];
+    let finalName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
     if (userDoc.exists()) {
       const data = userDoc.data();
       setSalary(data.salary || 0);
       if (data.monthsToShow) setMonthsToShow(data.monthsToShow);
+      if (data.billingOffset !== undefined) setBillingOffset(data.billingOffset);
       if (data.displayName) finalName = data.displayName;
       
       // --- LÓGICA DE DATA INICIAL (START MONTH) ---
@@ -158,6 +162,12 @@ const DashBoard = () => {
       }
   }
 
+  const handleToggleBillingOffset = async () => {
+    const next = billingOffset === 0 ? 1 : 0;
+    setBillingOffset(next);
+    if (user) await setDoc(doc(db, "users", user.uid), { billingOffset: next }, { merge: true });
+  };
+
   const handleUpdateMonths = async () => {
       const val = prompt("Quantos meses à frente deseja visualizar?", monthsToShow);
       if(val) {
@@ -247,8 +257,15 @@ const DashBoard = () => {
         </div>
         
         <div className="flex gap-2 flex-wrap justify-center md:justify-end items-center">
-            <button 
-                onClick={handleUpdateMonths} 
+            <button
+                onClick={handleToggleBillingOffset}
+                className={`text-xs px-3 py-2 rounded transition-colors flex items-center gap-1 shadow-sm border ${billingOffset === 1 ? 'bg-yellow-500 hover:bg-yellow-600 border-yellow-400/30' : 'bg-blue-700 hover:bg-blue-800 border-blue-500/30'}`}
+                title={billingOffset === 1 ? 'Modo Fatura: pago mês seguinte' : 'Modo Normal: pago no mês'}
+            >
+                🧾 {billingOffset === 1 ? 'Fatura' : 'Normal'}
+            </button>
+            <button
+                onClick={handleUpdateMonths}
                 className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-2 rounded transition-colors flex items-center gap-1 shadow-sm border border-blue-500/30"
                 title="Configurar Meses"
             >
@@ -262,8 +279,17 @@ const DashBoard = () => {
                 💰 R$ {parseFloat(salary).toFixed(2)}
             </button>
             
-            <button 
-                onClick={handleLogout} 
+            {role === 'admin' && (
+              <button
+                onClick={() => navigate('/admin')}
+                className="text-xs bg-purple-600 hover:bg-purple-700 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
+                title="Painel Admin"
+              >
+                <Shield size={16} />
+              </button>
+            )}
+            <button
+                onClick={handleLogout}
                 className="ml-2 text-xs bg-red-500 hover:bg-red-600 text-white p-2 rounded transition-colors flex items-center gap-1 shadow-sm"
                 title="Sair"
             >
@@ -282,10 +308,11 @@ const DashBoard = () => {
             id={'month-card-' + i} 
             className="snap-center shrink-0 w-[90vw] md:w-[400px] h-full"
           >
-            <MonthCard 
-                date={date} 
-                salary={salary} 
-                allTransactions={transactions} 
+            <MonthCard
+                date={date}
+                salary={salary}
+                allTransactions={transactions}
+                billingOffset={billingOffset}
                 onDelete={handleDelete} 
                 onEdit={handleEdit}
                 onAdd={handleNew}

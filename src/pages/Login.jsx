@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebaseConfig';
 import { useNavigate } from 'react-router-dom';
@@ -17,20 +17,41 @@ const Login = () => {
     if (user) navigate('/');
   }, [user]);
 
+  // Verifica resultado de redirect ao carregar a página
+  useEffect(() => {
+    const checkRedirect = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (!result) return;
+        const snap = await getDoc(doc(db, 'allowedEmails', result.user.email));
+        if (!snap.exists()) {
+          await signOut(auth);
+          setError('Acesso não autorizado. Contacta o administrador.');
+        }
+      } catch (err) {
+        console.error(err);
+        setError('Erro ao entrar com Google. Tenta novamente.');
+      }
+    };
+    checkRedirect();
+  }, []);
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
     try {
+      // Tenta popup primeiro; se bloqueado, usa redirect
       const result = await signInWithPopup(auth, provider);
       const snap = await getDoc(doc(db, 'allowedEmails', result.user.email));
       if (!snap.exists()) {
         await signOut(auth);
         setError('Acesso não autorizado. Contacta o administrador.');
       }
-      // Se aprovado, onAuthStateChanged em auth.jsx vai setar o user e o useEffect redireciona
     } catch (err) {
-      console.error(err);
-      if (err.code !== 'auth/popup-closed-by-user') {
+      if (err.code === 'auth/popup-blocked') {
+        await signInWithRedirect(auth, provider);
+      } else if (err.code !== 'auth/popup-closed-by-user') {
+        console.error(err);
         setError('Erro ao entrar com Google. Tenta novamente.');
       }
     }

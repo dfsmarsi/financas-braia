@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../services/auth';
@@ -8,6 +8,7 @@ const provider = new GoogleAuthProvider();
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
+  const [popupBloqueado, setPopupBloqueado] = useState(false);
   const { user, accessDenied } = useAuth();
   const navigate = useNavigate();
 
@@ -15,19 +16,14 @@ const Login = () => {
     if (user) navigate('/');
   }, [user]);
 
-  // Necessário para processar o resultado após signInWithRedirect
-  useEffect(() => {
-    getRedirectResult(auth).catch(err => console.error('[REDIRECT]', err));
-  }, []);
-
   const handleGoogleLogin = async () => {
     setLoading(true);
+    setPopupBloqueado(false);
     try {
       await signInWithPopup(auth, provider);
-      // auth.jsx trata o resultado via onAuthStateChanged
     } catch (err) {
       if (err.code === 'auth/popup-blocked') {
-        await signInWithRedirect(auth, provider);
+        setPopupBloqueado(true);
       } else if (err.code !== 'auth/popup-closed-by-user') {
         console.error(err);
       }
@@ -44,6 +40,13 @@ const Login = () => {
         {accessDenied && (
           <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-6 text-center border border-red-100">
             Acesso não autorizado. Contacta o administrador.
+          </div>
+        )}
+
+        {popupBloqueado && (
+          <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-sm mb-6 border border-yellow-200">
+            <p className="font-semibold mb-1">Popup bloqueado pelo browser</p>
+            <p>Clica no ícone 🔒 ou 🚫 na barra de endereço e seleciona <strong>"Sempre permitir popups"</strong> para este site. Depois clica novamente em Entrar.</p>
           </div>
         )}
 

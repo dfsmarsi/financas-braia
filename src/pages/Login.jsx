@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../services/auth';
@@ -14,6 +14,11 @@ const Login = () => {
   useEffect(() => {
     if (user) navigate('/');
   }, [user]);
+
+  // Necessário para processar o resultado após signInWithRedirect
+  useEffect(() => {
+    getRedirectResult(auth).catch(err => console.error('[REDIRECT]', err));
+  }, []);
 
   const handleGoogleLogin = async () => {
     setLoading(true);
